@@ -5,9 +5,9 @@ package org.docopt;
  */
 final class DocoptLanguageError extends Error {
 
-	private static final long serialVersionUID = 1L;
+  private static final long serialVersionUID = 1L;
 
-	public DocoptLanguageError(final String message) {
-		super(message);
-	}
+  public DocoptLanguageError(final String message) {
+    super(message);
+  }
 }

@@ -1,213 +1,206 @@
 package org.docopt;
 
+import java.util.List;
+
 import static org.docopt.Python.bool;
 import static org.docopt.Python.in;
 import static org.docopt.Python.list;
 import static org.docopt.Python.plus;
 import static org.docopt.Python.repr;
 
-import java.util.List;
-
 /**
  * Leaf/terminal node of a pattern tree.
  */
 abstract class LeafPattern extends Pattern {
 
-	static class SingleMatchResult {
+  private final String name;
+  private Object value;
 
-		private final Integer position;
+  public LeafPattern(final String name, final Object value) {
+    this.name = name;
+    this.value = value;
+  }
 
-		private final LeafPattern match;
+  public LeafPattern(final String name) {
+    this(name, null);
+  }
 
-		public SingleMatchResult(final Integer position, final LeafPattern match) {
-			this.position = position;
-			this.match = match;
-		}
+  @Override
+  public String toString() {
+    return String.format("%s(%s, %s)", getClass().getSimpleName(),
+        repr(name), repr(value));
+  }
 
-		public Integer getPosition() {
-			return position;
-		}
+  @Override
+  protected final List<Pattern> flat(final Class<?>... types) {
+    // >>> [self] if not types or type(self) in types else []
+    {
+      if (!bool(types) || in(getClass(), types)) {
+        return list((Pattern) this);
+      }
 
-		public LeafPattern getMatch() {
-			return match;
-		}
+      return list();
+    }
+  }
 
-		@Override
-		public String toString() {
-			return String.format("%s(%d, %s)", getClass().getSimpleName(),
-					position, match);
-		}
-	}
+  @Override
+  protected MatchResult match(final List<LeafPattern> left,
+                              List<LeafPattern> collected) {
+    // >>> collected = [] if collected is None else collected
+    if (collected == null) {
+      collected = list();
+    }
 
-	private final String name;
+    Integer pos;
+    LeafPattern match;
 
-	private Object value;
+    // >>> pos, match = self.single_match(left)
+    {
+      final SingleMatchResult m = singleMatch(left);
+      pos = m.getPosition();
+      match = m.getMatch();
+    }
 
-	public LeafPattern(final String name, final Object value) {
-		this.name = name;
-		this.value = value;
-	}
+    if (match == null) {
+      return new MatchResult(false, left, collected);
+    }
 
-	public LeafPattern(final String name) {
-		this(name, null);
-	}
+    List<LeafPattern> left_;
 
-	@Override
-	public String toString() {
-		return String.format("%s(%s, %s)", getClass().getSimpleName(),
-				repr(name), repr(value));
-	}
+    // >>> left_ = left[:pos] + left[pos + 1:]
+    {
+      left_ = list();
+      left_.addAll(left.subList(0, pos));
 
-	@Override
-	protected final List<Pattern> flat(final Class<?>... types) {
-		// >>> [self] if not types or type(self) in types else []
-		{
-			if (!bool(types) || in(getClass(), types)) {
-				return list((Pattern) this);
-			}
+      if ((pos + 1) < left.size()) {
+        left_.addAll(left.subList(pos + 1, left.size()));
+      }
+    }
 
-			return list();
-		}
-	}
+    List<LeafPattern> sameName;
 
-	@Override
-	protected MatchResult match(final List<LeafPattern> left,
-			List<LeafPattern> collected) {
-		// >>> collected = [] if collected is None else collected
-		if (collected == null) {
-			collected = list();
-		}
+    // >>> same_name = [a for a in collected if a.name == self.name]
+    {
+      sameName = list();
 
-		Integer pos;
-		LeafPattern match;
+      for (final LeafPattern a : collected) {
+        if (name.equals(a.getName())) {
+          sameName.add(a);
+        }
+      }
+    }
 
-		// >>> pos, match = self.single_match(left)
-		{
-			final SingleMatchResult m = singleMatch(left);
-			pos = m.getPosition();
-			match = m.getMatch();
-		}
+    Object increment;
 
-		if (match == null) {
-			return new MatchResult(false, left, collected);
-		}
+    if ((value instanceof Integer) || (value instanceof List)) {
+      if (value instanceof Integer) {
+        increment = 1;
+      } else {
+        final Object v = match.getValue();
+        increment = (v instanceof String) ? list(v) : v;
+      }
 
-		List<LeafPattern> left_;
+      if (sameName.isEmpty()) {
+        match.setValue(increment);
+        return new MatchResult(true, left_,
+            plus(collected, list(match)));
+      }
 
-		// >>> left_ = left[:pos] + left[pos + 1:]
-		{
-			left_ = list();
-			left_.addAll(left.subList(0, pos));
+      // >>> same_name[0].value += increment
+      {
+        final LeafPattern p = sameName.get(0);
+        final Object v = p.getValue();
 
-			if ((pos + 1) < left.size()) {
-				left_.addAll(left.subList(pos + 1, left.size()));
-			}
-		}
+        if (v instanceof Integer) {
+          final Integer a = (Integer) v;
+          final Integer b = (Integer) increment;
+          p.setValue(a + b);
+        } else if (v instanceof List) {
+          @SuppressWarnings("unchecked") final List<LeafPattern> a = (List<LeafPattern>) v;
+          @SuppressWarnings("unchecked") final List<LeafPattern> b = (List<LeafPattern>) increment;
+          a.addAll(b);
+        }
+      }
 
-		List<LeafPattern> sameName;
+      // TODO: Should collected be copied to a new list?
+      return new MatchResult(true, left_, collected);
+    }
 
-		// >>> same_name = [a for a in collected if a.name == self.name]
-		{
-			sameName = list();
+    return new MatchResult(true, left_, plus(collected, list(match)));
+  }
 
-			for (final LeafPattern a : collected) {
-				if (name.equals(a.getName())) {
-					sameName.add(a);
-				}
-			}
-		}
+  protected abstract SingleMatchResult singleMatch(List<LeafPattern> left);
 
-		Object increment;
+  public String getName() {
+    return name;
+  }
 
-		if ((value instanceof Integer) || (value instanceof List)) {
-			if (value instanceof Integer) {
-				increment = 1;
-			}
-			else {
-				final Object v = match.getValue();
-				increment = (v instanceof String) ? list(v) : v;
-			}
+  public Object getValue() {
+    return value;
+  }
 
-			if (sameName.isEmpty()) {
-				match.setValue(increment);
-				return new MatchResult(true, left_,
-						plus(collected, list(match)));
-			}
+  public void setValue(final Object value) {
+    this.value = value;
+  }
 
-			// >>> same_name[0].value += increment
-			{
-				final LeafPattern p = sameName.get(0);
-				final Object v = p.getValue();
+  @Override
+  public int hashCode() {
+    final int prime = 31;
+    int result = super.hashCode();
+    result = prime * result + ((name == null) ? 0 : name.hashCode());
+    result = prime * result + ((value == null) ? 0 : value.hashCode());
+    return result;
+  }
 
-				if (v instanceof Integer) {
-					final Integer a = (Integer) v;
-					final Integer b = (Integer) increment;
-					p.setValue(a + b);
-				}
-				else if (v instanceof List) {
-					@SuppressWarnings("unchecked")
-					final List<LeafPattern> a = (List<LeafPattern>) v;
-					@SuppressWarnings("unchecked")
-					final List<LeafPattern> b = (List<LeafPattern>) increment;
-					a.addAll(b);
-				}
-			}
+  @Override
+  public boolean equals(final Object obj) {
+    if (this == obj) {
+      return true;
+    }
+    if (getClass() != obj.getClass()) {
+      return false;
+    }
+    final LeafPattern other = (LeafPattern) obj;
+    if (name == null) {
+      if (other.name != null) {
+        return false;
+      }
+    } else if (!name.equals(other.name)) {
+      return false;
+    }
+    if (value == null) {
+      if (other.value != null) {
+        return false;
+      }
+    } else if (!value.equals(other.value)) {
+      return false;
+    }
+    return true;
+  }
 
-			// TODO: Should collected be copied to a new list?
-			return new MatchResult(true, left_, collected);
-		}
+  static class SingleMatchResult {
 
-		return new MatchResult(true, left_, plus(collected, list(match)));
-	}
+    private final Integer position;
 
-	protected abstract SingleMatchResult singleMatch(List<LeafPattern> left);
+    private final LeafPattern match;
 
-	public String getName() {
-		return name;
-	}
+    public SingleMatchResult(final Integer position, final LeafPattern match) {
+      this.position = position;
+      this.match = match;
+    }
 
-	public Object getValue() {
-		return value;
-	}
+    public Integer getPosition() {
+      return position;
+    }
 
-	public void setValue(final Object value) {
-		this.value = value;
-	}
+    public LeafPattern getMatch() {
+      return match;
+    }
 
-	@Override
-	public int hashCode() {
-		final int prime = 31;
-		int result = super.hashCode();
-		result = prime * result + ((name == null) ? 0 : name.hashCode());
-		result = prime * result + ((value == null) ? 0 : value.hashCode());
-		return result;
-	}
-
-	@Override
-	public boolean equals(final Object obj) {
-		if (this == obj) {
-			return true;
-		}
-		if (getClass() != obj.getClass()) {
-			return false;
-		}
-		final LeafPattern other = (LeafPattern) obj;
-		if (name == null) {
-			if (other.name != null) {
-				return false;
-			}
-		}
-		else if (!name.equals(other.name)) {
-			return false;
-		}
-		if (value == null) {
-			if (other.value != null) {
-				return false;
-			}
-		}
-		else if (!value.equals(other.value)) {
-			return false;
-		}
-		return true;
-	}
+    @Override
+    public String toString() {
+      return String.format("%s(%d, %s)", getClass().getSimpleName(),
+          position, match);
+    }
+  }
 }

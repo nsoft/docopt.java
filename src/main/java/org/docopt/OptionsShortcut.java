@@ -7,7 +7,7 @@ import java.util.Collections;
  */
 final class OptionsShortcut extends Optional {
 
-	public OptionsShortcut() {
-		super(Collections.<Pattern> emptyList());
-	}
+  public OptionsShortcut() {
+    super(Collections.<Pattern>emptyList());
+  }
 }

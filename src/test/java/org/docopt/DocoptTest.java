@@ -21,238 +21,228 @@ import static org.docopt.Python.partition;
 
 public final class DocoptTest extends TestCase {
 
-	private static final String FILE_PROPERTY = DocoptTest.class.getName()
-			+ ".file";
+  private static final String FILE_PROPERTY = DocoptTest.class.getName()
+      + ".file";
 
-	private static final String VERBOSE_PROPERTY = DocoptTest.class.getName()
-			+ ".verbose";
+  private static final String VERBOSE_PROPERTY = DocoptTest.class.getName()
+      + ".verbose";
 
-	private static final boolean VERBOSE = Boolean.getBoolean(VERBOSE_PROPERTY);
+  private static final boolean VERBOSE = Boolean.getBoolean(VERBOSE_PROPERTY);
 
-	private static final String MESSAGE_FORMAT = "\n\"\"\"%s\"\"\"\n$ %s\n\b";
+  private static final String MESSAGE_FORMAT = "\n\"\"\"%s\"\"\"\n$ %s\n\b";
 
-	private static final String USER_ERROR = "\"user-error\"";
+  private static final String USER_ERROR = "\"user-error\"";
 
-	private static final TypeReference<Map<String, Object>> TYPE_REFERENCE = new TypeReference<Map<String, Object>>() {
-	};
+  private static final TypeReference<Map<String, Object>> TYPE_REFERENCE = new TypeReference<Map<String, Object>>() {
+  };
 
-	private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+  private final String doc;
+  private final List<String> argv;
+  private final Object expected;
 
-	public static Test suite() {
-		String file = System.getProperty(FILE_PROPERTY);
+  private DocoptTest(final String name, final String doc,
+                     final List<String> argv, final Object expected) {
+    super(name);
 
-		try {
-			final URL url;
+    this.doc = doc;
+    this.argv = argv;
+    this.expected = expected; // TODO: Make a defensive copy?
+  }
 
-			if (file == null) {
-				url = DocoptTest.class.getResource("/testcases.docopt");
-				file = url.toString();
-			}
-			else {
-				url = url(file);
-			}
+  public static Test suite() {
+    String file = System.getProperty(FILE_PROPERTY);
 
-			return parse(url);
-		}
-		catch (final IOException e) {
-			final String message;
+    try {
+      final URL url;
 
-			if (e instanceof FileNotFoundException) {
-				message = "No such file";
-			}
-			else {
-				message = e.getMessage();
-			}
+      if (file == null) {
+        url = DocoptTest.class.getResource("/testcases.docopt");
+        file = url.toString();
+      } else {
+        url = url(file);
+      }
 
-			throw new DocoptTestError(message);
-		}
-	}
+      return parse(url);
+    } catch (final IOException e) {
+      final String message;
 
-	private static DocoptTestError readError(final String file,
-			final String message) {
-		return new DocoptTestError(String.format("Failed to parse %s: %s",
-				file, message));
-	}
+      if (e instanceof FileNotFoundException) {
+        message = "No such file";
+      } else {
+        message = e.getMessage();
+      }
 
-	private static URL url(final String file) throws IOException {
-		URI uri;
+      throw new DocoptTestError(message);
+    }
+  }
 
-		try {
-			uri = new URI(file);
-		}
-		catch (final URISyntaxException e) {
-			throw readError(file, e.getMessage());
-		}
+  private static DocoptTestError readError(final String file,
+                                           final String message) {
+    return new DocoptTestError(String.format("Failed to parse %s: %s",
+        file, message));
+  }
 
-		// If the URI is not absolute, assume that it is a file path.
-		if (!uri.isAbsolute()) {
-			uri = new File(file).getAbsoluteFile().toURI();
-		}
+  private static URL url(final String file) throws IOException {
+    URI uri;
 
-		// If the URI is a file, make sure that it is readable.
-		if ("file".equals(uri.getScheme())) {
-			final File f = new File(uri);
+    try {
+      uri = new URI(file);
+    } catch (final URISyntaxException e) {
+      throw readError(file, e.getMessage());
+    }
 
-			// If the file does not exist, an exception will be thrown
-			// when we attempt to read it. These errors just give a little
-			// more detail.
-			if (f.exists()) {
-				if (f.isDirectory()) {
-					throw readError(file, "Is a directory");
-				}
+    // If the URI is not absolute, assume that it is a file path.
+    if (!uri.isAbsolute()) {
+      uri = new File(file).getAbsoluteFile().toURI();
+    }
 
-				if (!f.canRead()) {
-					throw readError(file, "Permission denied");
-				}
-			}
-		}
+    // If the URI is a file, make sure that it is readable.
+    if ("file".equals(uri.getScheme())) {
+      final File f = new File(uri);
 
-		return uri.toURL();
-	}
+      // If the file does not exist, an exception will be thrown
+      // when we attempt to read it. These errors just give a little
+      // more detail.
+      if (f.exists()) {
+        if (f.isDirectory()) {
+          throw readError(file, "Is a directory");
+        }
 
-	private static TestSuite parse(final URL url) throws IOException {
-		if (VERBOSE) {
-			System.out.println("Generating test cases from " + url);
-		}
+        if (!f.canRead()) {
+          throw readError(file, "Permission denied");
+        }
+      }
+    }
 
-		final String name = pureBaseName(url);
+    return uri.toURL();
+  }
 
-		String raw = Docopt.read(url.openStream());
+  private static TestSuite parse(final URL url) throws IOException {
+    if (VERBOSE) {
+      System.out.println("Generating test cases from " + url);
+    }
 
-		raw = Pattern.compile("#.*$", Pattern.MULTILINE).matcher(raw)
-				.replaceAll("");
+    final String name = pureBaseName(url);
 
-		if (raw.startsWith("\"\"\"")) {
-			raw = raw.substring(3);
-		}
+    String raw = Docopt.read(url.openStream());
 
-		int index = 0;
+    raw = Pattern.compile("#.*$", Pattern.MULTILINE).matcher(raw)
+        .replaceAll("");
 
-		final TestSuite suite = new TestSuite("docopt");
+    if (raw.startsWith("\"\"\"")) {
+      raw = raw.substring(3);
+    }
 
-		for (final String fixture : raw.split("r\"\"\"")) {
-			if (fixture.isEmpty()) {
-				continue;
-			}
+    int index = 0;
 
-			final String doc;
-			final String body;
+    final TestSuite suite = new TestSuite("docopt");
 
-			// >>> doc, u, body = fixture.partition('"""')
-			{
-				final String[] u = partition(fixture, "\"\"\"");
-				doc = u[0];
-				body = u[2];
-			}
+    for (final String fixture : raw.split("r\"\"\"")) {
+      if (fixture.isEmpty()) {
+        continue;
+      }
 
-			boolean first = true;
+      final String doc;
+      final String body;
 
-			for (final String _case : body.split("\\$")) {
-				if (first) {
-					first = false;
-					continue;
-				}
+      // >>> doc, u, body = fixture.partition('"""')
+      {
+        final String[] u = partition(fixture, "\"\"\"");
+        doc = u[0];
+        body = u[2];
+      }
 
-				final String argv;
-				final String expect;
+      boolean first = true;
 
-				// >>> argv, u, expect = case.strip().partition('\n')
-				{
-					final String[] u = partition(_case.trim(), "\n");
-					argv = u[0];
-					expect = u[2];
-				}
+      for (final String _case : body.split("\\$")) {
+        if (first) {
+          first = false;
+          continue;
+        }
 
-				suite.addTest(new DocoptTest(String.format("%s_%d", name,
-						++index), doc, argv(argv), expect(expect)));
-			}
-		}
+        final String argv;
+        final String expect;
 
-		return suite;
-	}
+        // >>> argv, u, expect = case.strip().partition('\n')
+        {
+          final String[] u = partition(_case.trim(), "\n");
+          argv = u[0];
+          expect = u[2];
+        }
 
-	private static String pureBaseName(final URL url) {
-		final String name = url.getPath();
+        suite.addTest(new DocoptTest(String.format("%s_%d", name,
+            ++index), doc, argv(argv), expect(expect)));
+      }
+    }
 
-		if (name.isEmpty()) {
-			return name;
-		}
+    return suite;
+  }
 
-		return name.replaceFirst("^.+/", "").replaceFirst("\\.[^.]+$", "");
-	}
+  private static String pureBaseName(final URL url) {
+    final String name = url.getPath();
 
-	private static List<String> argv(final String argv) {
-		final List<String> u = list(argv.trim().split("\\s+"));
-		u.remove(0);
-		return u;
-	}
+    if (name.isEmpty()) {
+      return name;
+    }
 
-	private static String argv(final List<String> argv) {
-		final StringBuilder sb = new StringBuilder();
+    return name.replaceFirst("^.+/", "").replaceFirst("\\.[^.]+$", "");
+  }
 
-		for (final String arg : argv) {
-			sb.append("\"");
-			sb.append(arg.replaceAll("\"", "\\\""));
-			sb.append("\" ");
-		}
+  private static List<String> argv(final String argv) {
+    final List<String> u = list(argv.trim().split("\\s+"));
+    u.remove(0);
+    return u;
+  }
 
-		if (!argv.isEmpty()) {
-			sb.setLength(sb.length() - 1);
-		}
+  private static String argv(final List<String> argv) {
+    final StringBuilder sb = new StringBuilder();
 
-		return sb.toString();
-	}
+    for (final String arg : argv) {
+      sb.append("\"");
+      sb.append(arg.replaceAll("\"", "\\\""));
+      sb.append("\" ");
+    }
 
-	private static Object expect(final String expect) {
-		if (USER_ERROR.equals(expect)) {
-			return USER_ERROR;
-		}
+    if (!argv.isEmpty()) {
+      sb.setLength(sb.length() - 1);
+    }
 
-		try {
-			return OBJECT_MAPPER.readValue(expect, TYPE_REFERENCE);
-		}
-		catch (final IOException e) {
-			throw new IllegalStateException(
-					"could not parse JSON object from:\n" + expect, e);
-		}
-	}
+    return sb.toString();
+  }
 
-	private final String doc;
+  private static Object expect(final String expect) {
+    if (USER_ERROR.equals(expect)) {
+      return USER_ERROR;
+    }
 
-	private final List<String> argv;
+    try {
+      return OBJECT_MAPPER.readValue(expect, TYPE_REFERENCE);
+    } catch (final IOException e) {
+      throw new IllegalStateException(
+          "could not parse JSON object from:\n" + expect, e);
+    }
+  }
 
-	private final Object expected;
+  @Override
+  protected void runTest() throws Throwable {
+    Object actual = null;
 
-	private DocoptTest(final String name, final String doc,
-			final List<String> argv, final Object expected) {
-		super(name);
+    try {
+      actual = new Docopt(doc).withStdOut(null).withStdErr(null)
+          .withExit(false).parse(argv);
+    } catch (final DocoptExitException e) {
+      actual = USER_ERROR;
+    }
 
-		this.doc = doc;
-		this.argv = argv;
-		this.expected = expected; // TODO: Make a defensive copy?
-	}
+    final String message = (!VERBOSE) ? null : String.format(
+        MESSAGE_FORMAT, doc, argv(argv));
 
-	@Override
-	protected void runTest() throws Throwable {
-		Object actual = null;
-
-		try {
-			actual = new Docopt(doc).withStdOut(null).withStdErr(null)
-					.withExit(false).parse(argv);
-		}
-		catch (final DocoptExitException e) {
-			actual = USER_ERROR;
-		}
-
-		final String message = (!VERBOSE) ? null : String.format(
-				MESSAGE_FORMAT, doc, argv(argv));
-
-		try {
-			assertEquals(message, expected, actual);
-		}
-		catch (final junit.framework.AssertionFailedError e) {
-			e.setStackTrace(new StackTraceElement[0]);
-			throw e;
-		}
-	}
+    try {
+      assertEquals(message, expected, actual);
+    } catch (final junit.framework.AssertionFailedError e) {
+      e.setStackTrace(new StackTraceElement[0]);
+      throw e;
+    }
+  }
 }

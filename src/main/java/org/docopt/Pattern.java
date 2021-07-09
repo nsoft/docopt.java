@@ -1,212 +1,207 @@
 package org.docopt;
 
+import java.util.Arrays;
+import java.util.List;
+
 import static org.docopt.Python.count;
 import static org.docopt.Python.list;
 import static org.docopt.Python.set;
 import static org.docopt.Python.split;
 
-import java.util.Arrays;
-import java.util.List;
-
 abstract class Pattern {
 
-	static class MatchResult {
+  @SuppressWarnings("unchecked")
+  private static final List<Class<? extends BranchPattern>> PARENTS = Arrays
+      .asList(Required.class, Optional.class, OptionsShortcut.class,
+          Either.class, OneOrMore.class);
 
-		private final boolean match;
+  /**
+   * Expand pattern into an (almost) equivalent one, but with single Either.
+   * <p>
+   * Example: ((-a | -b) (-c | -d)) => (-a -c | -a -d | -b -c | -b -d) Quirks:
+   * [-a] => (-a), (-a...) => (-a -a)
+   */
+  private static Either transform(final Pattern pattern) {
+    final List<List<Pattern>> result = list();
+    List<List<Pattern>> groups;
 
-		private final List<LeafPattern> left;
+    // >>> groups = [[pattern]]
+    {
+      // Can't use "groups = list(list(pattern))" since the argument is
+      // iterable.
+      groups = list();
+      groups.add(list(pattern));
+    }
 
-		private final List<LeafPattern> collected;
+    while (!groups.isEmpty()) {
+      final List<Pattern> children = groups.remove(0);
 
-		public MatchResult(final boolean match, final List<LeafPattern> left,
-				final List<LeafPattern> collected) {
-			this.match = match;
-			this.left = left;
-			this.collected = collected;
-		}
+      BranchPattern child = null;
 
-		public boolean matched() {
-			return match;
-		}
+      // "If any parent type is the same type as the type of any child, select the first child that is of a type in parents."
+      // >>> if any(t in map(type, children) for t in parents):
+      // >>> child = [c for c in children if type(c) in parents][0]
+      // TODO: I think that the "if" clause is redundant; instead, we just
+      // try to get the child directly.
+      for (final Pattern c : children) {
+        if (PARENTS.contains(c.getClass())) {
+          child = (BranchPattern) c;
+          break;
+        }
+      }
 
-		public List<LeafPattern> getLeft() {
-			return left;
-		}
+      // See above for changes from python implementation.
+      if (child != null) {
+        children.remove(child);
 
-		public List<LeafPattern> getCollected() {
-			return collected;
-		}
-	}
+        if (child.getClass() == Either.class) {
+          for (final Pattern c : child.getChildren()) {
+            // >>> groups.append([c] + children)
+            final List<Pattern> group = list(c);
+            group.addAll(children);
+            groups.add(group);
+          }
+        } else if (child.getClass() == OneOrMore.class) {
+          // >>> groups.append(child.children * 2 + children)
+          final List<Pattern> group = list(child.getChildren());
+          group.addAll(child.getChildren());
+          group.addAll(children);
+          groups.add(group);
+        } else {
+          // >>> groups.append(child.children + children)
+          final List<Pattern> group = list(child.getChildren());
+          group.addAll(children);
+          groups.add(group);
+        }
+      } else {
+        result.add(children);
+      }
+    }
 
-	@SuppressWarnings("unchecked")
-	private static final List<Class<? extends BranchPattern>> PARENTS = Arrays
-			.asList(Required.class, Optional.class, OptionsShortcut.class,
-					Either.class, OneOrMore.class);
+    // >>> return Either(*[Required(*e) for e in result])
+    {
+      final List<Required> required = list();
 
-	/**
-	 * Expand pattern into an (almost) equivalent one, but with single Either.
-	 * 
-	 * Example: ((-a | -b) (-c | -d)) => (-a -c | -a -d | -b -c | -b -d) Quirks:
-	 * [-a] => (-a), (-a...) => (-a -a)
-	 */
-	private static Either transform(final Pattern pattern) {
-		final List<List<Pattern>> result = list();
-		List<List<Pattern>> groups;
+      for (final List<Pattern> e : result) {
+        required.add(new Required(e));
+      }
 
-		// >>> groups = [[pattern]]
-		{
-			// Can't use "groups = list(list(pattern))" since the argument is
-			// iterable.
-			groups = list();
-			groups.add(list(pattern));
-		}
+      return new Either(required);
+    }
+  }
 
-		while (!groups.isEmpty()) {
-			final List<Pattern> children = groups.remove(0);
+  public Pattern fix() {
+    fixIdentities(null);
+    fixRepeatingArguments();
+    return this;
+  }
 
-			BranchPattern child = null;
+  /**
+   * Make pattern-tree tips point to same object if they are equal.
+   */
+  private void fixIdentities(List<Pattern> uniq) {
+    // >>> if not hasattr(self, 'children')
+    if (!(this instanceof BranchPattern)) {
+      return;
+    }
 
-			// "If any parent type is the same type as the type of any child, select the first child that is of a type in parents."
-			// >>> if any(t in map(type, children) for t in parents):
-			// >>> child = [c for c in children if type(c) in parents][0]
-			// TODO: I think that the "if" clause is redundant; instead, we just
-			// try to get the child directly.
-			for (final Pattern c : children) {
-				if (PARENTS.contains(c.getClass())) {
-					child = (BranchPattern) c;
-					break;
-				}
-			}
+    if (uniq == null) {
+      uniq = list(set(flat()));
+    }
 
-			// See above for changes from python implementation.
-			if (child != null) {
-				children.remove(child);
+    final List<Pattern> children = ((BranchPattern) this).getChildren();
 
-				if (child.getClass() == Either.class) {
-					for (final Pattern c : child.getChildren()) {
-						// >>> groups.append([c] + children)
-						final List<Pattern> group = list(c);
-						group.addAll(children);
-						groups.add(group);
-					}
-				}
-				else if (child.getClass() == OneOrMore.class) {
-					// >>> groups.append(child.children * 2 + children)
-					final List<Pattern> group = list(child.getChildren());
-					group.addAll(child.getChildren());
-					group.addAll(children);
-					groups.add(group);
-				}
-				else {
-					// >>> groups.append(child.children + children)
-					final List<Pattern> group = list(child.getChildren());
-					group.addAll(children);
-					groups.add(group);
-				}
-			}
-			else {
-				result.add(children);
-			}
-		}
+    for (int i = 0; i < children.size(); i++) {
+      final Pattern child = children.get(i);
 
-		// >>> return Either(*[Required(*e) for e in result])
-		{
-			final List<Required> required = list();
+      if (!(child instanceof BranchPattern)) {
+        assert uniq.contains(child);
+        children.set(i, uniq.get(uniq.indexOf(child)));
+      } else {
+        child.fixIdentities(uniq);
+      }
+    }
+  }
 
-			for (final List<Pattern> e : result) {
-				required.add(new Required(e));
-			}
+  /**
+   * Fix elements that should accumulate/increment values.
+   */
+  private void fixRepeatingArguments() {
+    List<List<Pattern>> either;
 
-			return new Either(required);
-		}
-	}
+    // >>> either = [list(child.children) for child in
+    // transform(self).children]
+    {
+      either = list();
 
-	public Pattern fix() {
-		fixIdentities(null);
-		fixRepeatingArguments();
-		return this;
-	}
+      for (final Pattern child : transform(this).getChildren()) {
+        either.add(list(((Required) child).getChildren()));
+      }
+    }
 
-	/**
-	 * Make pattern-tree tips point to same object if they are equal.
-	 */
-	private void fixIdentities(List<Pattern> uniq) {
-		// >>> if not hasattr(self, 'children')
-		if (!(this instanceof BranchPattern)) {
-			return;
-		}
+    for (final List<Pattern> $case : either) {
+      // >>> for e in [child for child in case if case.count(child) > 1]
+      for (final Pattern child : $case) { // ^^^
+        if (count($case, child) > 1) { // ^^^
+          final LeafPattern e = (LeafPattern) child; // ^^^
 
-		if (uniq == null) {
-			uniq = list(set(flat()));
-		}
+          if ((e.getClass() == Argument.class)
+              || ((e.getClass() == Option.class) && ((Option) e)
+              .getArgCount() != 0)) {
+            if (e.getValue() == null) {
+              e.setValue(list());
+            } else if (!(e.getValue() instanceof List)) {
+              e.setValue(split(e.getValue().toString()));
+            }
+          }
 
-		final List<Pattern> children = ((BranchPattern) this).getChildren();
+          if ((e.getClass() == Command.class)
+              || ((e.getClass() == Option.class) && ((Option) e)
+              .getArgCount() == 0)) {
+            e.setValue(0);
+          }
+        }
+      }
+    }
+  }
 
-		for (int i = 0; i < children.size(); i++) {
-			final Pattern child = children.get(i);
+  protected abstract List<Pattern> flat(Class<?>... types);
 
-			if (!(child instanceof BranchPattern)) {
-				assert uniq.contains(child);
-				children.set(i, uniq.get(uniq.indexOf(child)));
-			}
-			else {
-				child.fixIdentities(uniq);
-			}
-		}
-	}
+  protected abstract MatchResult match(List<LeafPattern> left,
+                                       List<LeafPattern> collected);
 
-	/**
-	 * Fix elements that should accumulate/increment values.
-	 */
-	private void fixRepeatingArguments() {
-		List<List<Pattern>> either;
+  protected MatchResult match(final List<LeafPattern> left) {
+    return match(left, null);
+  }
 
-		// >>> either = [list(child.children) for child in
-		// transform(self).children]
-		{
-			either = list();
+  @Override
+  public abstract boolean equals(Object obj);
 
-			for (final Pattern child : transform(this).getChildren()) {
-				either.add(list(((Required) child).getChildren()));
-			}
-		}
+  static class MatchResult {
 
-		for (final List<Pattern> $case : either) {
-			// >>> for e in [child for child in case if case.count(child) > 1]
-			for (final Pattern child : $case) { // ^^^
-				if (count($case, child) > 1) { // ^^^
-					final LeafPattern e = (LeafPattern) child; // ^^^
+    private final boolean match;
 
-					if ((e.getClass() == Argument.class)
-							|| ((e.getClass() == Option.class) && ((Option) e)
-									.getArgCount() != 0)) {
-						if (e.getValue() == null) {
-							e.setValue(list());
-						}
-						else if (!(e.getValue() instanceof List)) {
-							e.setValue(split(e.getValue().toString()));
-						}
-					}
+    private final List<LeafPattern> left;
 
-					if ((e.getClass() == Command.class)
-							|| ((e.getClass() == Option.class) && ((Option) e)
-									.getArgCount() == 0)) {
-						e.setValue(0);
-					}
-				}
-			}
-		}
-	}
+    private final List<LeafPattern> collected;
 
-	protected abstract List<Pattern> flat(Class<?>... types);
+    public MatchResult(final boolean match, final List<LeafPattern> left,
+                       final List<LeafPattern> collected) {
+      this.match = match;
+      this.left = left;
+      this.collected = collected;
+    }
 
-	protected abstract MatchResult match(List<LeafPattern> left,
-			List<LeafPattern> collected);
+    public boolean matched() {
+      return match;
+    }
 
-	protected MatchResult match(final List<LeafPattern> left) {
-		return match(left, null);
-	}
+    public List<LeafPattern> getLeft() {
+      return left;
+    }
 
-	@Override
-	public abstract boolean equals(Object obj);
+    public List<LeafPattern> getCollected() {
+      return collected;
+    }
+  }
 }
